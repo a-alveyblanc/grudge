@@ -6,6 +6,8 @@
 .. autofunction:: make_discretization_collection
 
 .. currentmodule:: grudge.discretization
+.. autoclass:: PartID
+.. autofunction:: filter_part_boundaries
 """
 
 __copyright__ = """
@@ -34,7 +36,11 @@ THE SOFTWARE.
 """
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, Optional
+from typing import (
+    TYPE_CHECKING, Any, List, Mapping, Optional, Sequence, Tuple, Union
+)
+from meshmode.discretization.poly_element import (
+    InterpolatoryEdgeClusteredGroupFactory, ModalGroupFactory)
 from warnings import warn
 
 import numpy as np
@@ -47,13 +53,11 @@ from meshmode.discretization.connection import (
     DiscretizationConnection,
     make_face_restriction,
 )
-from meshmode.discretization.poly_element import (
-    InterpolatoryEdgeClusteredGroupFactory,
-    ModalGroupFactory,
-)
 from meshmode.dof_array import DOFArray
 from meshmode.mesh import BTAG_PARTITION, Mesh
 from pytools import memoize_method, single_valued
+
+from dataclasses import dataclass, replace
 
 from grudge.dof_desc import (
     DD_VOLUME_ALL,
@@ -74,6 +78,74 @@ from grudge.dof_desc import (
 if TYPE_CHECKING:
     import mpi4py.MPI
 
+
+@dataclass(frozen=True)
+class PartID:
+    """Unique identifier for a piece of a partitioned mesh.
+
+    .. attribute:: volume_tag
+
+        The volume of the part.
+
+    .. attribute:: rank
+
+        The (optional) MPI rank of the part.
+
+    """
+    volume_tag: VolumeTag
+    rank: Optional[int] = None
+
+
+# {{{ part ID normalization
+
+def _normalize_mesh_part_ids(
+        mesh: Mesh,
+        self_volume_tag: VolumeTag,
+        all_volume_tags: Sequence[VolumeTag],
+        mpi_communicator: Optional["mpi4py.MPI.Intracomm"] = None):
+    """Convert a mesh's configuration-dependent "part ID" into a fixed type."""
+    from numbers import Integral
+    if mpi_communicator is not None:
+        # Accept PartID or rank (assume intra-volume for the latter)
+        def as_part_id(mesh_part_id):
+            if isinstance(mesh_part_id, PartID):
+                return mesh_part_id
+            elif isinstance(mesh_part_id, Integral):
+                return PartID(self_volume_tag, int(mesh_part_id))
+            else:
+                raise TypeError(f"Unable to convert {mesh_part_id} to PartID.")
+    else:
+        # Accept PartID or volume tag
+        def as_part_id(mesh_part_id):
+            if isinstance(mesh_part_id, PartID):
+                return mesh_part_id
+            elif mesh_part_id in all_volume_tags:
+                return PartID(mesh_part_id)
+            else:
+                raise TypeError(f"Unable to convert {mesh_part_id} to PartID.")
+
+    facial_adjacency_groups = mesh.facial_adjacency_groups
+
+    new_facial_adjacency_groups = []
+
+    from meshmode.mesh import InterPartAdjacencyGroup
+    for grp_list in facial_adjacency_groups:
+        new_grp_list = []
+        for fagrp in grp_list:
+            if isinstance(fagrp, InterPartAdjacencyGroup):
+                part_id = as_part_id(fagrp.part_id)
+                new_fagrp = replace(
+                    fagrp,
+                    boundary_tag=BTAG_PARTITION(part_id),
+                    part_id=part_id)
+            else:
+                new_fagrp = fagrp
+            new_grp_list.append(new_fagrp)
+        new_facial_adjacency_groups.append(new_grp_list)
+
+    return mesh.copy(facial_adjacency_groups=new_facial_adjacency_groups)
+
+# }}}
 
 MeshOrDiscr = Mesh | Discretization
 TagToElementGroupFactory = Mapping[DiscretizationTag, ElementGroupFactory]
@@ -155,6 +227,9 @@ class DiscretizationCollection:
             order: int | None = None,
             discr_tag_to_group_factory: TagToElementGroupFactory | None = None,
             mpi_communicator: Optional["mpi4py.MPI.Intracomm"] = None,
+            inter_part_connections: Optional[
+                Mapping[Tuple[PartID, PartID],
+                    DiscretizationConnection]] = None,
             ) -> None:
         """
         :arg discr_tag_to_group_factory: A mapping from discretization tags
@@ -205,6 +280,9 @@ class DiscretizationCollection:
 
             mesh = volume_discrs
 
+            mesh = _normalize_mesh_part_ids(
+                mesh, VTAG_ALL, [VTAG_ALL], mpi_communicator=mpi_communicator)
+
             discr_tag_to_group_factory = _normalize_discr_tag_to_group_factory(
                     dim=mesh.dim,
                     discr_tag_to_group_factory=discr_tag_to_group_factory,
@@ -218,17 +296,32 @@ class DiscretizationCollection:
 
             del mesh
 
+            if inter_part_connections is not None:
+                raise TypeError("may not pass inter_part_connections when "
+                        "DiscretizationCollection constructor is called in "
+                        "legacy mode")
+
+            self._inter_part_connections = \
+                    _set_up_inter_part_connections(
+                            array_context=self._setup_actx,
+                            mpi_communicator=mpi_communicator,
+                            volume_discrs=volume_discrs,
+                            base_group_factory=(
+                                discr_tag_to_group_factory[DISCR_TAG_BASE]))
+
             # }}}
         else:
             assert discr_tag_to_group_factory is not None
             self._discr_tag_to_group_factory = discr_tag_to_group_factory
 
-        self._volume_discrs = volume_discrs
+            if inter_part_connections is None:
+                raise TypeError("inter_part_connections must be passed when "
+                        "DiscretizationCollection constructor is called in "
+                        "'modern' mode")
 
-        self._dist_boundary_connections = {
-            vtag: self._set_up_distributed_communication(
-                        vtag, mpi_communicator, array_context)
-            for vtag in self._volume_discrs.keys()}
+            self._inter_part_connections = inter_part_connections
+
+        self._volume_discrs = volume_discrs
 
     # }}}
 
@@ -784,6 +877,128 @@ class DiscretizationCollection:
     # }}}
 
 
+# {{{ distributed/multi-volume setup
+
+def _set_up_inter_part_connections(
+        array_context: ArrayContext,
+        mpi_communicator: Optional["mpi4py.MPI.Intracomm"],
+        volume_discrs: Mapping[VolumeTag, Discretization],
+        base_group_factory: ElementGroupFactory,
+        ) -> Mapping[
+                Tuple[PartID, PartID],
+                DiscretizationConnection]:
+
+    from meshmode.distributed import (get_connected_parts,
+            make_remote_group_infos, InterRankBoundaryInfo,
+            MPIBoundaryCommSetupHelper)
+
+    rank = mpi_communicator.Get_rank() if mpi_communicator is not None else None
+
+    # Save boundary restrictions as they're created to avoid potentially creating
+    # them twice in the loop below
+    cached_part_bdry_restrictions: Mapping[
+        Tuple[PartID, PartID],
+        DiscretizationConnection] = {}
+
+    def get_part_bdry_restriction(self_part_id, other_part_id):
+        cached_result = cached_part_bdry_restrictions.get(
+            (self_part_id, other_part_id), None)
+        if cached_result is not None:
+            return cached_result
+        return cached_part_bdry_restrictions.setdefault(
+            (self_part_id, other_part_id),
+            make_face_restriction(
+                array_context, volume_discrs[self_part_id.volume_tag],
+                base_group_factory,
+                boundary_tag=BTAG_PARTITION(other_part_id)))
+
+    inter_part_conns: Mapping[
+            Tuple[PartID, PartID],
+            DiscretizationConnection] = {}
+
+    irbis = []
+
+    for vtag, volume_discr in volume_discrs.items():
+        part_id = PartID(vtag, rank)
+        connected_part_ids = get_connected_parts(volume_discr.mesh)
+        for connected_part_id in connected_part_ids:
+            bdry_restr = get_part_bdry_restriction(
+                self_part_id=part_id, other_part_id=connected_part_id)
+
+            if connected_part_id.rank == rank:
+                # {{{ rank-local interface between multiple volumes
+
+                connected_bdry_restr = get_part_bdry_restriction(
+                    self_part_id=connected_part_id, other_part_id=part_id)
+
+                from meshmode.discretization.connection import \
+                        make_partition_connection
+                inter_part_conns[connected_part_id, part_id] = \
+                    make_partition_connection(
+                        array_context,
+                        local_bdry_conn=bdry_restr,
+                        remote_bdry_discr=connected_bdry_restr.to_discr,
+                        remote_group_infos=make_remote_group_infos(
+                            array_context, part_id, connected_bdry_restr))
+
+                # }}}
+            else:
+                # {{{ cross-rank interface
+
+                if mpi_communicator is None:
+                    raise RuntimeError("must supply an MPI communicator "
+                        "when using a distributed mesh")
+
+                irbis.append(
+                        InterRankBoundaryInfo(
+                            local_part_id=part_id,
+                            remote_part_id=connected_part_id,
+                            remote_rank=connected_part_id.rank,
+                            local_boundary_connection=bdry_restr))
+
+                # }}}
+
+    if irbis:
+        assert mpi_communicator is not None
+
+        with MPIBoundaryCommSetupHelper(mpi_communicator, array_context,
+                irbis, base_group_factory) as bdry_setup_helper:
+            while True:
+                conns = bdry_setup_helper.complete_some()
+                if not conns:
+                    # We're done.
+                    break
+
+                inter_part_conns.update(conns)
+
+    return inter_part_conns
+
+# }}}
+
+
+# {{{ modal group factory
+
+def _generate_modal_group_factory(nodal_group_factory):
+    from meshmode.discretization.poly_element import (
+        ModalSimplexGroupFactory,
+        ModalTensorProductGroupFactory
+    )
+    from meshmode.mesh import SimplexElementGroup, TensorProductElementGroup
+
+    order = nodal_group_factory.order
+    mesh_group_cls = nodal_group_factory.mesh_group_class
+
+    if mesh_group_cls is SimplexElementGroup:
+        return ModalSimplexGroupFactory(order=order)
+    elif mesh_group_cls is TensorProductElementGroup:
+        return ModalTensorProductGroupFactory(order=order)
+    else:
+        raise ValueError(
+            f"Unknown mesh element group: {mesh_group_cls}"
+        )
+
+# }}}
+
 # {{{ make_discretization_collection
 
 
@@ -843,6 +1058,8 @@ def make_discretization_collection(
 
     del order
 
+    mpi_communicator = getattr(array_context, "mpi_communicator", None)
+
     if any(
             isinstance(mesh_or_discr, Discretization)
             for mesh_or_discr in volumes.values()):
@@ -851,14 +1068,60 @@ def make_discretization_collection(
     volume_discrs = {
         vtag: Discretization(
             array_context,
-            mesh,
+            _normalize_mesh_part_ids(
+                mesh, vtag, volumes.keys(), mpi_communicator=mpi_communicator),
             discr_tag_to_group_factory[DISCR_TAG_BASE])
         for vtag, mesh in volumes.items()}
 
     return DiscretizationCollection(
             array_context=array_context,
             volume_discrs=volume_discrs,
-            discr_tag_to_group_factory=discr_tag_to_group_factory)
+            discr_tag_to_group_factory=discr_tag_to_group_factory,
+            inter_part_connections=_set_up_inter_part_connections(
+                array_context=array_context,
+                mpi_communicator=mpi_communicator,
+                volume_discrs=volume_discrs,
+                base_group_factory=discr_tag_to_group_factory[DISCR_TAG_BASE]))
+
+# }}}
+
+
+# {{{ filter_part_boundaries
+
+def filter_part_boundaries(
+        dcoll: DiscretizationCollection,
+        *,
+        volume_dd: DOFDesc = DD_VOLUME_ALL,
+        neighbor_volume_dd: Optional[DOFDesc] = None,
+        neighbor_rank: Optional[int] = None) -> List[DOFDesc]:
+    """
+    Retrieve tags of part boundaries that match *neighbor_volume_dd* and/or
+    *neighbor_rank*.
+    """
+    vol_mesh = dcoll.discr_from_dd(volume_dd).mesh
+
+    from meshmode.mesh import InterPartAdjacencyGroup
+    filtered_part_bdry_dds = [
+        volume_dd.trace(fagrp.boundary_tag)
+        for fagrp_list in vol_mesh.facial_adjacency_groups
+        for fagrp in fagrp_list
+        if isinstance(fagrp, InterPartAdjacencyGroup)]
+
+    if neighbor_volume_dd is not None:
+        filtered_part_bdry_dds = [
+            bdry_dd
+            for bdry_dd in filtered_part_bdry_dds
+            if (
+                bdry_dd.domain_tag.tag.part_id.volume_tag
+                == neighbor_volume_dd.domain_tag.tag)]
+
+    if neighbor_rank is not None:
+        filtered_part_bdry_dds = [
+            bdry_dd
+            for bdry_dd in filtered_part_bdry_dds
+            if bdry_dd.domain_tag.tag.part_id.rank == neighbor_rank]
+
+    return filtered_part_bdry_dds
 
 # }}}
 

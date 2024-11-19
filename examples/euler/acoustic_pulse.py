@@ -38,7 +38,7 @@ from meshmode.mesh import BTAG_ALL, SimplexElementGroup, TensorProductElementGro
 from pytools.obj_array import make_obj_array
 
 import grudge.op as op
-from grudge.array_context import PytatoPyOpenCLArrayContext
+from grudge.array_context import PytatoPyOpenCLArrayContext, TensorProductFusionContractorArrayContext
 from grudge.models.euler import ConservedEulerField, EulerOperator, InviscidWallBC
 from grudge.shortcuts import rk4_step
 
@@ -125,7 +125,7 @@ def run_acoustic_pulse(actx,
     else:
         group_cls = SimplexElementGroup
 
-    dim = 2
+    dim = 3
     box_ll = -0.5
     box_ur = 0.5
     mesh = generate_regular_rect_mesh(
@@ -211,10 +211,12 @@ def run_acoustic_pulse(actx,
                 )
             assert norm_q < 5
 
-        start = time.time()
+        if step != 0:
+            start = time.time()
         fields = actx.thaw(actx.freeze(fields))
         fields = rk4_step(fields, t, dt, compiled_rhs)
-        elapsed += time.time() - start
+        if step != 0:
+            elapsed += time.time() - start
         t += dt
         step += 1
 
@@ -228,7 +230,7 @@ def main(ctx_factory, order=3, final_time=1, resolution=16,
     queue = cl.CommandQueue(cl_ctx)
 
     if lazy:
-        actx = PytatoPyOpenCLArrayContext(
+        actx = TensorProductFusionContractorArrayContext(
             queue,
             allocator=cl_tools.MemoryPool(cl_tools.ImmediateAllocator(queue)),
         )

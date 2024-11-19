@@ -399,6 +399,51 @@ class PytatoPyOpenCLArrayContext(_PytatoPyOpenCLArrayContextBase):
 # }}}
 
 
+# {{{ TensorProductFusionContractorArrayContext
+
+class TensorProductFusionContractorArrayContext(FusionContractorArrayContext):
+
+    def __init__(
+            self, queue: "cl.CommandQueue", allocator=None, *,
+            use_memory_pool=None,
+            compile_trace_callback=None,
+            use_axis_tag_inference_fallback: bool = False,
+            use_einsum_inference_fallback: bool = False,
+
+            # do not use: only for testing
+            _force_svm_arg_limit=None,
+            ) -> None:
+        super().__init__(
+            queue, allocator,
+            use_memory_pool=use_memory_pool,
+            compile_trace_callback=compile_trace_callback,
+            _force_svm_arg_limit=_force_svm_arg_limit,
+            use_axis_tag_inference_fallback=True,
+            use_einsum_inference_fallback=True)
+
+    def transform_dag(self, dag):
+
+        if 0:
+            # step 1: distribute mass inverse through DAG, across index lambdas
+            dag = InverseMassPropagator()(dag)
+
+            # step 2: remove mass-times-mass-inverse einsums
+            dag = InverseMassRemover()(dag)
+
+            # step 3: create new operator out of inverse mass times stiffness
+            dag = MassInverseTimesStiffnessSimplifier()(dag)
+
+            dag = pt.transform.map_and_copy(
+                dag, remove_redundant_tensor_product_reshapes)
+
+            dag = pt.transform.map_and_copy(
+                dag, remove_redundant_index_lambda_expressions)
+
+        return super().transform_dag(dag)
+
+# }}}
+
+
 class MPIBasedArrayContext:
     mpi_communicator: "MPI.Comm"
 
@@ -746,6 +791,14 @@ if _HAVE_FUSION_ACTX:
         """
 
     MPIPytatoArrayContext = MPIFusionContractorArrayContext
+
+    class MPITensorProductFusionContractorArrayContext(
+        MPIPytatoArrayContextBase, TensorProductFusionContractorArrayContext):
+        """
+        .. autofunction:: __init__
+        """
+
+    # MPIPytatoArrayContext = MPITensorProductFusionContractorArrayContext
 else:
     MPIPytatoArrayContext = MPIBasePytatoPyOpenCLArrayContext
 
