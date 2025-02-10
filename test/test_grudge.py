@@ -42,13 +42,17 @@ from meshmode.mesh import TensorProductElementGroup
 from pytools.obj_array import flat_obj_array
 
 from grudge import dof_desc, geometry, op
-from grudge.array_context import PytestPyOpenCLArrayContextFactory
+from grudge.array_context import (
+    PytestNumpyArrayContextFactory,
+    PytestPyOpenCLArrayContextFactory,
+)
 from grudge.discretization import make_discretization_collection
 
 
 logger = logging.getLogger(__name__)
 pytest_generate_tests = pytest_generate_tests_for_array_contexts(
-        [PytestPyOpenCLArrayContextFactory])
+        [PytestPyOpenCLArrayContextFactory,
+         PytestNumpyArrayContextFactory])
 
 
 # {{{ mass operator trig integration
