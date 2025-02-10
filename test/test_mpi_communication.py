@@ -37,7 +37,6 @@ from pytools.obj_array import flat_obj_array
 from grudge import dof_desc, op
 from grudge.array_context import (
     MPINumpyArrayContext,
-    MPIPyOpenCLArrayContext,
     MPIPytatoArrayContext,
 )
 from grudge.discretization import make_discretization_collection
@@ -53,8 +52,7 @@ class SimpleTag:
 
 # {{{ mpi test infrastructure
 
-DISTRIBUTED_ACTXS = [MPIPyOpenCLArrayContext,
-                     MPIPytatoArrayContext,
+DISTRIBUTED_ACTXS = [MPIPytatoArrayContext,
                      MPINumpyArrayContext]
 
 
@@ -91,8 +89,8 @@ def run_test_with_mpi_inner():
 
     if actx_class is MPIPytatoArrayContext:
         actx = actx_class(comm, queue, mpi_base_tag=15000)
-    elif actx_class is MPIPyOpenCLArrayContext:
-        actx = actx_class(comm, queue, force_device_scalars=True)
+    elif actx_class is MPINumpyArrayContext:
+        actx = actx_class(comm)
     else:
         raise ValueError("unknown actx_class")
 

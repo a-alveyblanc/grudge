@@ -141,7 +141,7 @@ from grudge.tools import rec_map_subarrays
 from grudge.trace_pair import (
     bdry_trace_pair,
     bv_trace_pair,
-    connected_ranks,
+    connected_parts,
     cross_rank_trace_pairs,
     interior_trace_pair,
     interior_trace_pairs,
@@ -157,7 +157,7 @@ from grudge.transform.metadata import (
 __all__ = (
     "bdry_trace_pair",
     "bv_trace_pair",
-    "connected_ranks",
+    "connected_parts",
     "cross_rank_trace_pairs",
     "elementwise_integral",
     "elementwise_max",
@@ -231,7 +231,6 @@ def _single_axis_contraction(
         },
         actx.einsum(spec, operator, data, arg_names=arg_names,
                     tagged=tagged))
-
 
 # }}}
 

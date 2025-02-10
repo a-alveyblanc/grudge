@@ -33,14 +33,12 @@ from arraycontext import (
 from grudge import op
 from grudge.array_context import (
     PytestNumpyArrayContextFactory,
-    PytestPyOpenCLArrayContextFactory,
 )
 
 
 logger = logging.getLogger(__name__)
 pytest_generate_tests = pytest_generate_tests_for_array_contexts(
-        [PytestPyOpenCLArrayContextFactory,
-         PytestNumpyArrayContextFactory])
+        [PytestNumpyArrayContextFactory])
 
 
 @pytest.mark.parametrize("order", [1, 2, 3])

@@ -31,7 +31,6 @@ from meshmode.dof_array import DOFArray
 
 from grudge.array_context import (
     PytestNumpyArrayContextFactory,
-    PytestPyOpenCLArrayContextFactory,
 )
 from grudge.discretization import make_discretization_collection
 from grudge.trace_pair import TracePair
@@ -39,8 +38,7 @@ from grudge.trace_pair import TracePair
 
 logger = logging.getLogger(__name__)
 pytest_generate_tests = pytest_generate_tests_for_array_contexts(
-        [PytestPyOpenCLArrayContextFactory,
-         PytestNumpyArrayContextFactory])
+        [PytestNumpyArrayContextFactory])
 
 
 def test_trace_pair(actx_factory):

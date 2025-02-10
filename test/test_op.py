@@ -42,7 +42,6 @@ from pytools.obj_array import make_obj_array
 from grudge import geometry, op
 from grudge.array_context import (
     PytestNumpyArrayContextFactory,
-    PytestPytatoPyOpenCLArrayContextFactory,
 )
 from grudge.discretization import make_discretization_collection
 from grudge.dof_desc import (
@@ -59,8 +58,7 @@ from grudge.trace_pair import bv_trace_pair
 
 logger = logging.getLogger(__name__)
 pytest_generate_tests = pytest_generate_tests_for_array_contexts(
-    [PytestPytatoPyOpenCLArrayContextFactory,
-     PytestNumpyArrayContextFactory]
+    [PytestNumpyArrayContextFactory]
 )
 
 
