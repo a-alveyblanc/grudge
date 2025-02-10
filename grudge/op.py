@@ -410,7 +410,6 @@ def _strong_scalar_grad(
         dcoll: DiscretizationCollection,
         dd_in: DOFDesc,
         vec: ArrayOrContainer,
-        *args,
         use_tensor_product_fast_eval: bool = True
     ) -> ArrayOrContainer:
 
@@ -432,7 +431,6 @@ def _strong_scalar_div(
         dcoll: DiscretizationCollection,
         dd: DOFDesc,
         vecs: ArrayOrContainer,
-        *args,
         use_tensor_product_fast_eval: bool = True) -> ArrayOrContainer:
     from arraycontext import (
         get_container_context_recursively,
@@ -1076,26 +1074,6 @@ def mass(dcoll: DiscretizationCollection,
 
 # {{{ Face mass operator
 
-def _apply_face_mass_tensor_product(
-        actx: ArrayContext,
-        face_group: ElementGroupBase,
-        volume_group: NodalElementGroupBase,
-        vec: ArrayOrContainer,
-    ) -> ArrayOrContainer:
-
-    vec = fold(face_group.space, vec)
-
-    face_mass_mat = reference_face_mass_matrix(
-        actx,
-        face_group=face_group,
-        vol_group=volume_group,
-        dtype=vec.dtype,
-        use_tensor_product_fast_eval=True
-    )
-
-    return unfold(volume_group.space, vec)
-
-
 def _apply_face_mass_simplicial(
         actx: ArrayContext,
         face_group: ElementGroupBase,
@@ -1124,7 +1102,6 @@ def _apply_face_mass_operator(
         dcoll: DiscretizationCollection,
         dd_in: DOFDesc,
         vec: ArrayOrContainer,
-        use_tensor_product_fast_eval: bool = True
     ) -> DOFArray:
     if not isinstance(vec, DOFArray):
         return map_array_container(
@@ -1145,34 +1122,20 @@ def _apply_face_mass_operator(
     surf_area_elements = area_element(actx, dcoll, dd=dd_in,
             _use_geoderiv_connection=actx.supports_nonscalar_broadcasting)
 
-    group_data = []
-    for vgroup, afgroup, vec_i, surf_ae_i in zip(
+    return DOFArray(actx, data=tuple(
+        _apply_face_mass_simplicial(
+            actx, afgroup, vgroup, vec_i * surf_ae_i
+        )
+        for vgroup, afgroup, vec_i, surf_ae_i in zip(
             volm_discr.groups, face_discr.groups, vec, surf_area_elements,
-            strict=True):
-
-        # fast evaluation only applicable to faces of 3D (or higher) elements
-        use_fast_eval = (use_tensor_product_fast_eval and volm_discr.dim > 3)
-        if isinstance(vgroup, TensorProductElementGroupBase) and use_fast_eval:
-            group_data.append(
-                _apply_face_mass_tensor_product(
-                    actx, afgroup, vgroup, vec_i * surf_ae_i
-                )
-              )
-
-        else:
-            group_data.append(
-                _apply_face_mass_simplicial(
-                    actx, afgroup, vgroup, vec_i * surf_ae_i
-                )
-              )
-
-    return DOFArray(actx, data=tuple(group_data))
+            strict=True
+        )
+    ))
 
 
 def face_mass(
         dcoll: DiscretizationCollection,
         *args,
-        use_tensor_product_fast_eval: bool = True
     ) -> ArrayOrContainer:
     r"""Return the action of the DG face mass matrix on a vector (or vectors)
     of :class:`~meshmode.dof_array.DOFArray`\ s, *vec*. In the case of
@@ -1216,9 +1179,7 @@ def face_mass(
     else:
         raise TypeError("invalid number of arguments")
 
-    return _apply_face_mass_operator(
-        dcoll, dd_in, vec,
-        use_tensor_product_fast_eval=use_tensor_product_fast_eval)
+    return _apply_face_mass_operator(dcoll, dd_in, vec)
 
 # }}}
 
