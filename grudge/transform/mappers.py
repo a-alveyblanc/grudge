@@ -265,21 +265,23 @@ class FaceMassResultReshaper(CopyMapper):
 
         return new_expr
 
-
 def tensor_product_algebraic_transforms(dag):
+    import pytato as pt
+    dag = pt.transform.deduplicate_data_wrappers(dag)
+
     # 1. preprocess face mass result (reshape to tp -> reshape from tp)
-    dag = FaceMassResultReshaper()(dag)
+    dag = pt.transform.deduplicate_data_wrappers(FaceMassResultReshaper()(dag))
 
     # 2. distribute the inverse mass to:
     #   - einsums with stiffness
     #   - einsums with mass
     #   - face mass (insert applications between reshapes)
     # FIXME: takes a really long time
-    dag = InverseMassDistributor()(dag)
+    dag = pt.transform.deduplicate_data_wrappers(InverseMassDistributor()(dag))
 
     # 3. remove einsums with mass and mass inverse
     # FIXME: takes a really long time
-    dag = RedundantMassRemover()(dag)
+    dag = pt.transform.deduplicate_data_wrappers(RedundantMassRemover()(dag))
 
     # done
     return dag

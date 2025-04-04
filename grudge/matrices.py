@@ -196,13 +196,14 @@ def reference_stiffness_transpose_matrices(
         num_matrices = input_group.dim
 
     if input_group == output_group:
-        stiffness_t =  np.asarray([
-            mp.nodal_quad_bilinear_form(
+        stiffness_t = np.asarray([
+            mp.nodal_quadrature_bilinear_form_matrix(
                 quadrature=quadrature,
-                test_basis=basis,
-                trial_basis=basis,
+                test_functions=basis.derivatives(rst_axis),
+                trial_functions=basis.functions,
                 input_nodes=nodes,
-                test_derivative_ax=rst_axis
+                nodal_interp_functions_test=basis.functions,
+                nodal_interp_functions_trial=basis.functions
             )
             for rst_axis in range(num_matrices)
             ], order="C"
@@ -221,11 +222,11 @@ def reference_stiffness_transpose_matrices(
         )
 
     stiffness_t = np.asarray([
-        mp.nodal_quad_operator(
+        mp.nodal_quadrature_test_matrix(
             quadrature=quadrature,
-            test_basis=basis,
+            test_functions=basis.derivatives(rst_axis),
             nodes=nodes,
-            test_derivative_ax=rst_axis
+            nodal_interp_functions=basis.functions
         )
         for rst_axis in range(num_matrices)
     ], order="C")
@@ -287,11 +288,13 @@ def reference_mass_matrix(
                 actx,
                 axis_tags,
                 actx.from_numpy(
-                    mp.nodal_quad_bilinear_form(
+                    mp.nodal_quadrature_bilinear_form_matrix(
                         quadrature=quadrature,
-                        test_basis=basis,
-                        trial_basis=basis,
-                        input_nodes=nodes
+                        test_functions=basis.functions,
+                        trial_functions=basis.functions,
+                        input_nodes=nodes,
+                        nodal_interp_functions_test=basis.functions,
+                        nodal_interp_functions_trial=basis.functions
                     )
                 )
             )
@@ -303,10 +306,11 @@ def reference_mass_matrix(
             actx,
             axis_tags,
             actx.from_numpy(
-                mp.nodal_quad_operator(
+                mp.nodal_quadrature_test_matrix(
                     quadrature=quadrature,
-                    test_basis=basis,
-                    nodes=nodes
+                    test_functions=basis.functions,
+                    nodes=nodes,
+                    nodal_interp_functions=basis.functions
                 )
             )
         )
@@ -355,11 +359,13 @@ def reference_inverse_mass_matrix(
             axis_tags,
             actx.from_numpy(
                 la.inv(
-                    mp.nodal_quad_bilinear_form(
+                    mp.nodal_quadrature_bilinear_form_matrix(
                         quadrature=quadrature,
-                        test_basis=basis,
-                        trial_basis=basis,
-                        input_nodes=nodes
+                        test_functions=basis.functions,
+                        trial_functions=basis.functions,
+                        input_nodes=nodes,
+                        nodal_interp_functions_test=basis.functions,
+                        nodal_interp_functions_trial=basis.functions
                     )
                 )
             )
@@ -437,21 +443,24 @@ def reference_face_mass_matrix(
         )
 
         if face_basis is not None:
-            face_mass[:, iface, :] = mp.nodal_quad_bilinear_form(
+            face_mass[:, iface, :] = mp.nodal_quadrature_bilinear_form_matrix(
                 quadrature=face_quadrature,
-                trial_basis=face_basis,
-                test_basis=vol_basis,
+                trial_functions=face_basis.functions,
+                test_functions=vol_basis.functions,
+                nodal_interp_functions_trial=face_basis.functions,
+                nodal_interp_functions_test=vol_basis.functions,
                 input_nodes=face_nodes,
                 output_nodes=vol_nodes,
-                mapping_function=face.map_to_volume
+                test_function_node_map=face.map_to_volume
             )
 
         else:
-            face_mass[:, iface, :] = mp.nodal_quad_operator(
+            face_mass[:, iface, :] = mp.nodal_quadrature_test_matrix(
                 quadrature=face_quadrature,
-                test_basis=vol_basis,
+                test_functions=vol_basis.functions,
+                nodal_interp_functions=vol_basis.functions,
                 nodes=vol_nodes,
-                mapping_function=face.map_to_volume
+                test_function_node_map=face.map_to_volume
             )
 
     return actx.tag(

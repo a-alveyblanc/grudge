@@ -103,6 +103,40 @@ except ImportError:
     _HAVE_FUSION_ACTX = False
 
 if _HAVE_FUSION_ACTX:
+    def deduplicate_data_wrappers(dag):
+        import pytato as pt
+        data_wrapper_cache = {}
+        data_wrappers_encountered = 0
+
+        def cached_data_wrapper_if_present(ary):
+            nonlocal data_wrappers_encountered
+
+            if isinstance(ary, pt.DataWrapper):
+
+                data_wrappers_encountered += 1
+                cache_key = (ary.data.base_data.int_ptr, ary.data.offset,
+                             ary.shape, ary.data.strides)
+                try:
+                    result = data_wrapper_cache[cache_key]
+                except KeyError:
+                    result = ary
+                    data_wrapper_cache[cache_key] = result
+
+                return result
+            else:
+                return ary
+
+        dag = pt.transform.map_and_copy(dag, cached_data_wrapper_if_present)
+
+        if data_wrappers_encountered:
+            logger.info("data wrapper de-duplication: "
+                    "%d encountered, %d kept, %d eliminated",
+                    data_wrappers_encountered,
+                    len(data_wrapper_cache),
+                    data_wrappers_encountered - len(data_wrapper_cache))
+
+        return dag
+
     def remove_redundant_tensor_product_reshapes(ary):
         # FIXME: variable names can be more clear
         if isinstance(ary, pt.Reshape):

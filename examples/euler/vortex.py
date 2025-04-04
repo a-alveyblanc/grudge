@@ -165,6 +165,9 @@ def run_vortex(actx, order=3, resolution=8, final_time=5,
     step += 1
 
     while t < final_time:
+        if step > 100:
+            break
+
         if visualize:
             vis.write_vtk_file(
                 f"{exp_name}-{step:04d}.vtu",
@@ -197,7 +200,8 @@ def main(ctx_factory, order=3, final_time=5, resolution=8,
          lf_stabilization=False,
          visualize=False,
          lazy=False,
-         use_tpe=False):
+         use_tpe=False,
+         use_tp_transforms=False):
     cl_ctx = ctx_factory()
     queue = cl.CommandQueue(cl_ctx)
 
@@ -212,7 +216,7 @@ def main(ctx_factory, order=3, final_time=5, resolution=8,
         actx = FusionContractorArrayContext(
             queue,
             allocator=cl_tools.MemoryPool(cl_tools.ImmediateAllocator(queue)),
-            use_tp_transforms=use_tpe
+            use_tp_transforms=use_tp_transforms
         )
     else:
         actx = PyOpenCLArrayContext(
@@ -264,6 +268,7 @@ if __name__ == "__main__":
                         help="switch to a lazy computation mode")
     parser.add_argument("--tpe", action="store_true",
                         help="use a tensor-product discretization")
+    parser.add_argument("--use-tp-transforms", action="store_true")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO)
@@ -276,4 +281,5 @@ if __name__ == "__main__":
          lf_stabilization=args.lf,
          visualize=args.visualize,
          lazy=args.lazy,
-         use_tpe=args.tpe)
+         use_tpe=args.tpe,
+         use_tp_transforms=args.use_tp_transforms)

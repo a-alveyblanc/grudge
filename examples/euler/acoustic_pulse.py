@@ -37,7 +37,6 @@ from grudge.array_context import (
 from grudge.models.euler import (
     ConservedEulerField,
     EulerOperator,
-    EntropyStableEulerOperator,
     InviscidWallBC
 )
 from meshmode.mesh import TensorProductElementGroup
@@ -167,12 +166,8 @@ def run_acoustic_pulse(actx,
         InterpolatoryEdgeClusteredGroupFactory,
         QuadratureGroupFactory)
 
-    if esdg:
-        case = "esdg-pulse"
-        operator_cls = EntropyStableEulerOperator
-    else:
-        case = "pulse"
-        operator_cls = EulerOperator
+    case = "pulse"
+    operator_cls = EulerOperator
 
     exp_name = f"fld-{case}-N{order}-K{resolution}"
 
@@ -227,10 +222,15 @@ def run_acoustic_pulse(actx,
 
     step = 0
     t = 0.0
+    import time
+    elapsed = 0
     while t < final_time:
+        if step > 100:
+            break
         if step % 10 == 0:
             norm_q = actx.to_numpy(op.norm(dcoll, fields, 2))
-            logger.info("[%04d] t = %.5f |q| = %.5e", step, t, norm_q)
+            logger.info("[%04d] t = %.5f |q| = %.5e walltime = %.5f",
+                        step, t, norm_q, elapsed / 10)
             if visualize:
                 vis.write_vtk_file(
                     f"{exp_name}-{step:04d}.vtu",
@@ -241,9 +241,12 @@ def run_acoustic_pulse(actx,
                     ]
                 )
             assert norm_q < 5
+            elapsed = 0
 
         fields = actx.thaw(actx.freeze(fields))
+        start = time.time()
         fields = rk4_step(fields, t, dt, compiled_rhs)
+        elapsed += time.time() - start
         t += dt
         step += 1
 
@@ -252,7 +255,7 @@ def run_acoustic_pulse(actx,
 
 def main(ctx_factory, order=3, final_time=1, resolution=16,
          overintegration=False, visualize=False, lazy=False,
-         esdg=False, tpe=False):
+         esdg=False, tpe=False, use_tp_transforms=False):
     cl_ctx = ctx_factory()
     queue = cl.CommandQueue(cl_ctx)
 
@@ -261,6 +264,7 @@ def main(ctx_factory, order=3, final_time=1, resolution=16,
         actx = FusionContractorArrayContext(
             queue,
             allocator=cl_tools.MemoryPool(cl_tools.ImmediateAllocator(queue)),
+            use_tp_transforms=use_tp_transforms
         )
     else:
         actx = PyOpenCLArrayContext(
@@ -303,6 +307,7 @@ if __name__ == "__main__":
                         help="switch to a lazy computation mode")
     parser.add_argument("--tpe", action="store_true",
                         help="use tensor product elements")
+    parser.add_argument("--use-tp-transforms", action="store_true")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO)
@@ -313,4 +318,5 @@ if __name__ == "__main__":
          esdg=args.esdg,
          overintegration=args.oi,
          visualize=args.visualize,
-         lazy=args.lazy, tpe=args.tpe)
+         lazy=args.lazy, tpe=args.tpe,
+         use_tp_transforms=args.use_tp_transforms)

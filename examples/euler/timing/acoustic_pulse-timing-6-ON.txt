@@ -1,0 +1,11 @@
+INFO:__main__:[0000] t = 0.00000 |q| = 2.70819e+00 walltime = 0.00000
+INFO:__main__:[0010] t = 0.00340 |q| = 2.70819e+00 walltime = 1.49017
+INFO:__main__:[0020] t = 0.00680 |q| = 2.70818e+00 walltime = 0.22781
+INFO:__main__:[0030] t = 0.01020 |q| = 2.70817e+00 walltime = 0.22734
+INFO:__main__:[0040] t = 0.01361 |q| = 2.70815e+00 walltime = 0.22716
+INFO:__main__:[0050] t = 0.01701 |q| = 2.70813e+00 walltime = 0.22753
+INFO:__main__:[0060] t = 0.02041 |q| = 2.70811e+00 walltime = 0.22747
+INFO:__main__:[0070] t = 0.02381 |q| = 2.70808e+00 walltime = 0.22760
+INFO:__main__:[0080] t = 0.02721 |q| = 2.70805e+00 walltime = 0.22794
+INFO:__main__:[0090] t = 0.03061 |q| = 2.70801e+00 walltime = 0.22729
+INFO:__main__:[0100] t = 0.03401 |q| = 2.70798e+00 walltime = 0.22773
